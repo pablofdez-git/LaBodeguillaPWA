@@ -375,7 +375,7 @@ async function cargarRanking(){
 }
 
 // ── RENDER ────────────────────────────────────────────────────────────────────
-function colCarta(palo){ return ['♥','♦'].includes(palo)?'#C94A3F':'#EDE9F4'; }
+function colCarta(palo){ return ['♥','♦'].includes(palo)?'#C94A3F':'#111111'; }
 
 function htmlCarta(c, oculta=false){
   if(oculta) return `<div style="width:56px;height:84px;border-radius:8px;background:#2E1065;border:2px solid rgba(196,181,253,.5);display:flex;align-items:center;justify-content:center;overflow:hidden;flex-shrink:0"><img src="assets/Javicristo.png" style="width:100%;height:100%;object-fit:cover"/></div>`;
@@ -429,7 +429,7 @@ const hud = () => `<div style="display:flex;align-items:center;justify-content:s
     <button onclick="window._casinoRanking()" style="width:30px;height:30px;border-radius:15px;background:rgba(254,240,138,.08);border:1px solid rgba(254,240,138,.2);cursor:pointer;font-size:14px">🏆</button>
     <div style="background:rgba(254,240,138,.12);border:1px solid rgba(254,240,138,.3);border-radius:20px;padding:5px 12px;display:flex;align-items:center;gap:5px">
       <span style="color:#C4B5FD;font-size:11px;font-weight:700">${nombreJugador}</span>
-      <span style="color:#FEF08A;font-size:13px">🪙</span>
+      <span style="color:#FEF08A;font-size:13px"><span style="display:inline-block;width:14px;height:14px;border-radius:50%;background:#F59E0B;border:2px solid #D97706;vertical-align:middle;margin:0 1px"></span></span>
       <span style="color:#fff;font-weight:900;font-size:14px">${monedas}</span>
     </div>
   </div>
@@ -516,7 +516,7 @@ function htmlRuleta(){
         ${btnAyuda('ruleta')}
       </div>
       <div style="display:flex;justify-content:space-between;align-items:center;background:rgba(0,0,0,.4);border-radius:12px;padding:12px;margin-bottom:12px">
-        <div><div style="color:#9CA3AF;font-size:10px;font-weight:800;letter-spacing:1.5px">EN MESA</div><div style="color:#FEF08A;font-size:20px;font-weight:900">${totalApostado} 🪙</div></div>
+        <div><div style="color:#9CA3AF;font-size:10px;font-weight:800;letter-spacing:1.5px">EN MESA</div><div style="color:#FEF08A;font-size:20px;font-weight:900">${totalApostado} <span style="display:inline-block;width:14px;height:14px;border-radius:50%;background:#F59E0B;border:2px solid #D97706;vertical-align:middle;margin:0 1px"></span></div></div>
         <div style="display:flex;gap:6px">
           ${fichasDisp.map(f=>`<button onclick="window._ruletaFicha(${f})" style="width:36px;height:36px;border-radius:18px;background:${fichaSeleccionada===f?C.accent:'#1C1130'};border:2px solid ${fichaSeleccionada===f?'#FEF08A':C.border};color:${fichaSeleccionada===f?'#FEF08A':'#9CA3AF'};font-size:11px;font-weight:900;cursor:pointer">${f}</button>`).join('')}
         </div>
@@ -681,7 +681,7 @@ function htmlRanking(){
           <div style="flex:1">
             <div style="color:#fff;font-weight:900;font-size:15px">${j.nombre}${esTu?' 👈':''}</div>
             <div style="display:flex;gap:8px;margin-top:3px">
-              <span style="color:#9CA3AF;font-size:11px;font-weight:600">🪙 ${j.monedas}</span>
+              <span style="color:#9CA3AF;font-size:11px;font-weight:600"><span style="display:inline-block;width:14px;height:14px;border-radius:50%;background:#F59E0B;border:2px solid #D97706;vertical-align:middle;margin:0 1px"></span> ${j.monedas}</span>
               ${j.bancarrotas>0?`<span style="color:#F87171;font-size:11px;font-weight:600">💸 ×${j.bancarrotas}</span>`:''}
             </div>
           </div>
