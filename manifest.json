@@ -1,0 +1,15 @@
+{
+  "name": "La Bodeguilla",
+  "short_name": "Bodeguilla",
+  "description": "Peña El Chungazo - Stock, Casino y Cuentas",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#131215",
+  "theme_color": "#131215",
+  "icons": [
+    { "src": "assets/icon.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "assets/icon.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "assets/icon.png", "sizes": "180x180", "type": "image/png", "purpose": "apple-touch-icon" }
+  ]
+}
