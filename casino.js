@@ -796,19 +796,35 @@ window._warApuesta   = (d)=>{ warApuesta=Math.max(10,warApuesta+d); render(); };
 window._warTodo      = ()=>{ warApuesta=monedas; render(); };
 
 // ── Init ──────────────────────────────────────────────────────────────────────
-function init(){
+async function init(){
   const nombre=leerLocal('@casino_nombre','');
   if(nombre){
     nombreJugador=nombre;
+    // Cargar local primero para que la pantalla aparezca rápido
     monedas=parseInt(leerLocal('@bj_monedas','500'),10);
     bancarrotas=parseInt(leerLocal('@casino_bancarrotas','0'),10);
     rachaActual=parseInt(leerLocal('@bj_racha','0'),10);
     rachaMaxima=parseInt(leerLocal('@bj_racha_max','0'),10);
     pantallaC='lobby';
+    render();
+    // Luego consultar Supabase para sincronizar el saldo real
+    try {
+      const { ok, jugador } = await registrarOObtenerJugador(nombre);
+      if (ok && jugador) {
+        monedas     = jugador.monedas     ?? monedas;
+        bancarrotas = jugador.bancarrotas ?? bancarrotas;
+        // Actualizar local con el valor del servidor
+        guardarLocal('@bj_monedas', monedas);
+        guardarLocal('@casino_bancarrotas', bancarrotas);
+        render(); // Re-renderizar con los datos frescos
+      }
+    } catch(e) {
+      console.warn('No se pudo sincronizar con Supabase al arrancar:', e);
+    }
   } else {
     pantallaC='registro';
+    render();
   }
-  render();
 }
 
 // Esperar a que el tab de casino sea visible
