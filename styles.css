@@ -192,3 +192,17 @@ input  { font-family: inherit; outline: none; }
 .spacer-40   { height: 40px; }
 .divider     { height: 1px; background: var(--border); margin: 8px 0; }
 .text-muted  { color: var(--textMuted); font-size: 13px; }
+
+/* ── Eventos ──────────────────────────────────────────────────────────────── */
+.ev-card      { display:flex; align-items:stretch; background:var(--surface); border-radius:12px; margin-bottom:12px; border:1px solid var(--border); overflow:hidden; }
+.ev-atenuado  { opacity:.45; }
+.ev-barra     { width:4px; flex-shrink:0; }
+.ev-body      { flex:1; padding:14px; }
+.ev-fila-top  { display:flex; align-items:center; justify-content:space-between; margin-bottom:8px; gap:8px; }
+.ev-nombre    { font-size:16px; font-weight:700; color:var(--textPrim); flex:1; }
+.ev-dias-badge{ padding:3px 8px; border-radius:10px; border:1px solid; font-size:10px; font-weight:900; letter-spacing:.5px; white-space:nowrap; flex-shrink:0; }
+.ev-fila-meta { display:flex; align-items:center; flex-wrap:wrap; gap:10px; }
+.ev-tipo-pill { padding:3px 8px; border-radius:8px; border:1px solid; font-size:10px; font-weight:800; letter-spacing:.5px; }
+.ev-meta-item { display:flex; align-items:center; gap:5px; color:var(--textSec); font-size:12px; font-weight:600; }
+.ev-notas     { color:var(--textMuted); font-size:12px; margin-top:8px; font-style:italic; line-height:17px; }
+.ev-btn-del   { padding:14px 12px; background:none; border:none; cursor:pointer; align-self:flex-start; flex-shrink:0; }
