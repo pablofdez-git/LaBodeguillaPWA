@@ -4,10 +4,10 @@ import { supabase } from './supabase.js';
 // ── Estado ────────────────────────────────────────────────────────────────────
 let eventos      = [];
 let pantallaEv   = 'lista'; // 'lista' | 'form'
-let formTipo     = 'barbacoa';
+let formTipo     = 'comida';
 
 const TIPOS = [
-  { id: 'barbacoa', label: 'Barbacoa', color: '#C94A3F' },
+  { id: 'comida', label: 'Comida', color: '#C94A3F' },
   { id: 'compra',   label: 'Compra',   color: '#2D9E5F' },
   { id: 'limpieza', label: 'Limpieza', color: '#C9921A' },
   { id: 'salida',   label: 'Salida',   color: '#3B82F6' },
@@ -168,7 +168,7 @@ function bindEvents() {
   document.getElementById('btn-cerrar-eventos-form')?.addEventListener('click', cerrarPanel);
   document.getElementById('btn-volver-form')?.addEventListener('click', () => { pantallaEv = 'lista'; render(); });
 
-  document.getElementById('btn-nuevo-evento')?.addEventListener('click', () => { pantallaEv = 'form'; formTipo = 'barbacoa'; render(); });
+  document.getElementById('btn-nuevo-evento')?.addEventListener('click', () => { pantallaEv = 'form'; formTipo = 'comida'; render(); });
 
   // Chips de tipo
   document.querySelectorAll('#chips-tipo-ev [data-tipo]').forEach(btn => {
