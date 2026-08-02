@@ -32,8 +32,15 @@ let bancarrotas   = 0;
 let pantallaC     = 'cargando'; // cargando|registro|lobby|blackjack|ruleta|slots|dados|rasca|war|ranking
 let modalAyuda    = null;
 
-// Blackjack
-let mazoJugador=[], mazoCrupier=[], apuestaBJ=20, faseJuegoActual='lobby', rachaActual=0, rachaMaxima=0;
+// Blackjack — estado completo (espejo de la APK)
+let bjZapato=[], bjManoJ=[], bjManoSplit=[], bjManoC=[];
+let bjApuesta=50, bjApuestaDoble=0;
+let bjFase='lobby'; // lobby|jugando|seguro|split2|resultado
+let bjJugandoSplit=false;
+let bjResultado='', bjMensaje='', bjResultadoSplit='', bjMensajeSplit='';
+let bjPuedeDoble=false, bjPuedeSplit=false, bjOfrecerSeguro=false, bjSeguroPagado=false;
+let bjVerTapete=false;
+let rachaActual=0, rachaMaxima=0;
 
 // Ruleta
 let fichasRuleta={}, fichaSeleccionada=5, girandoRuleta=false, resultadoRuleta=null;
@@ -46,6 +53,8 @@ let apuestaDados=20, dadosValores=[null,null], dadosTirandose=false, dadosPunto=
 
 // Rasca
 let rascaApuesta=20, rascaCasillas=[], rascaFase='comprar', rascaMensaje='', rascaResultado='';
+let rascaTiradasHoy=0;
+const RASCA_LIMITE_DIARIO=5;
 
 // War
 let warApuesta=20, warCartaJ=null, warCartaC=null, warCartasGuerra=null, warFase='inicio', warMensaje='', warResultado='', warAnimando=false;
@@ -75,62 +84,227 @@ function guardarMonedas() {
   sincronizarJugador({nombre:nombreJugador, monedas, bancarrotas}).catch(()=>{});
 }
 
-// ── Blackjack ─────────────────────────────────────────────────────────────────
-function crearMazo() {
-  const palos=['♠','♥','♦','♣'], figuras=['A','2','3','4','5','6','7','8','9','10','J','Q','K'];
-  const m=[];
-  for(const p of palos) for(const f of figuras) m.push({figura:f,palo:p});
-  for(let i=m.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[m[i],m[j]]=[m[j],m[i]];}
-  return m;
+// ── Blackjack — Lógica completa (zapato 4 barajas, split, doble, seguro, 3:2) ──
+function crearZapato(){
+  const palos=['♦','♣','♥','♠'];
+  const vals=[
+    {nombre:'A',valor:11},{nombre:'2',valor:2},{nombre:'3',valor:3},{nombre:'4',valor:4},
+    {nombre:'5',valor:5},{nombre:'6',valor:6},{nombre:'7',valor:7},{nombre:'8',valor:8},
+    {nombre:'9',valor:9},{nombre:'10',valor:10},{nombre:'J',valor:10},{nombre:'Q',valor:10},{nombre:'K',valor:10},
+  ];
+  let z=[];
+  for(let d=0;d<4;d++) for(const p of palos) for(const v of vals) z.push({...v,palo:p});
+  for(let i=z.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[z[i],z[j]]=[z[j],z[i]];}
+  return z;
 }
-function valorCarta(c){ return c.figura==='A'?11:['J','Q','K'].includes(c.figura)?10:parseInt(c.figura); }
 function calcularMano(mano){
-  let total=0, ases=0;
-  for(const c of mano){total+=valorCarta(c);if(c.figura==='A')ases++;}
-  while(total>21&&ases>0){total-=10;ases--;}
-  return total;
+  let pts=mano.reduce((t,c)=>t+c.valor,0), ases=mano.filter(c=>c.nombre==='A').length;
+  while(pts>21&&ases>0){pts-=10;ases--;}
+  return pts;
 }
+function esBJNatural(mano){ return mano.length===2&&calcularMano(mano)===21; }
+
+function resolverPagoBJ(res, apuesta, esNatural=false){
+  if(res==='ganado'){
+    const g=esNatural?Math.floor(apuesta*1.5):apuesta;
+    rachaActual++; guardarLocal('@bj_racha',rachaActual);
+    if(rachaActual>rachaMaxima){rachaMaxima=rachaActual;guardarLocal('@bj_racha_max',rachaMaxima);}
+    return g;
+  } else if(res==='perdido'){
+    rachaActual=0; guardarLocal('@bj_racha',0);
+    return -apuesta;
+  }
+  return 0; // empate
+}
+
+function finalizarManoBJ(mJ, mC, apuesta, esNat=false){
+  const pJ=calcularMano(mJ), pC=calcularMano(mC);
+  let res='', msg='';
+  if(pJ>21){res='perdido';msg='Te has pasado de 21. Gana la casa.';}
+  else if(pC>21){res='ganado';msg='El crupier se pasa. ¡Victoria!';}
+  else if(esNat&&!esBJNatural(mC)){res='ganado';msg='¡BLACKJACK NATURAL! Cobras 3:2.';}
+  else if(pJ>pC){res='ganado';msg='Mayor puntuación. ¡Has ganado!';}
+  else if(pC>pJ){res='perdido';msg='El crupier tiene mejor mano. Gana la casa.';}
+  else{res='empate';msg='Empate. Se devuelve la apuesta.';}
+  return {res,msg};
+}
+
 function iniciarBJ(){
-  if(monedas<apuestaBJ){alert('No tienes suficientes monedas.');return;}
-  monedas-=apuestaBJ;
-  const mazo=crearMazo();
-  mazoJugador=[mazo.pop(),mazo.pop()];
-  mazoCrupier=[mazo.pop(),mazo.pop()];
-  faseJuegoActual='jugando';
+  if(monedas<bjApuesta){alert('No tienes suficientes monedas.');return;}
+  const saldoResta=monedas-bjApuesta;
+  monedas=saldoResta;
+  bjVerTapete=true; bjFase='jugando'; bjResultado=''; bjResultadoSplit='';
+  bjMensaje=''; bjMensajeSplit=''; bjManoSplit=[]; bjJugandoSplit=false;
+  bjApuestaDoble=0; bjOfrecerSeguro=false; bjSeguroPagado=false;
+  bjPuedeDoble=false; bjPuedeSplit=false;
+  const z=crearZapato();
+  const cJ1=z.pop(),cC1=z.pop(),cJ2=z.pop(),cC2=z.pop();
+  bjManoJ=[cJ1,cJ2]; bjManoC=[cC1,cC2]; bjZapato=z;
   render();
-  const totalJ=calcularMano(mazoJugador);
-  if(totalJ===21){setTimeout(()=>{resolverBJ(mazo);},400);}
-}
-function pedirCartaBJ(){
-  if(faseJuegoActual!=='jugando')return;
-  const mazo=crearMazo();
-  mazoJugador.push(mazo.pop());
-  if(calcularMano(mazoJugador)>21){faseJuegoActual='fin_jugador';resolverBJ(mazo);}
-  else render();
-}
-function plantarseBJ(){
-  if(faseJuegoActual!=='jugando')return;
-  const mazo=crearMazo();
-  resolverBJ(mazo);
-}
-function resolverBJ(mazo){
-  mazo=mazo||crearMazo();
-  while(calcularMano(mazoCrupier)<17) mazoCrupier.push(mazo.pop());
-  const totalJ=calcularMano(mazoJugador), totalC=calcularMano(mazoCrupier);
-  let msg='';
-  if(totalJ>21){msg='💀 Te has pasado.';rachaActual=0;}
-  else if(totalC>21||(totalJ>totalC)){
-    const premio=apuestaBJ*2; monedas+=premio;
-    msg=`🏆 ¡Ganas! +${premio} monedas.`;
-    rachaActual++; if(rachaActual>rachaMaxima){rachaMaxima=rachaActual;guardarLocal('@bj_racha_max',rachaMaxima);}
-    guardarLocal('@bj_racha',rachaActual);
-  } else if(totalJ===totalC){monedas+=apuestaBJ;msg='🤝 Empate. Recuperas la apuesta.';rachaActual=0;}
-  else{msg='❌ Gana el crupier.';rachaActual=0;}
-  faseJuegoActual='resultado';
-  guardarMonedas();
-  verificarBancarrota();
+  const bjJ=esBJNatural(bjManoJ), bjC=esBJNatural(bjManoC);
+  // Ofrecer seguro si carta visible crupier es As
+  if(cC1.nombre==='A'&&!bjJ){
+    bjOfrecerSeguro=true; bjFase='seguro';
+    bjPuedeDoble=false; bjPuedeSplit=false;
+    render(); return;
+  }
+  // BJ natural
+  if(bjJ||bjC){
+    bjFase='resultado';
+    if(bjJ&&bjC){
+      bjResultado='empate'; bjMensaje='Doble Blackjack Natural. Empate.';
+      monedas=saldoResta+bjApuesta;
+    } else if(bjJ){
+      const g=resolverPagoBJ('ganado',bjApuesta,true);
+      monedas=saldoResta+bjApuesta+g;
+      bjResultado='ganado'; bjMensaje=`¡BLACKJACK! Ganas ${bjApuesta+g} monedas (3:2).`;
+    } else {
+      resolverPagoBJ('perdido',bjApuesta);
+      bjResultado='perdido'; bjMensaje='Blackjack del crupier. Gana la casa.';
+    }
+    guardarMonedas(); verificarBancarrota(); render(); return;
+  }
+  // Partida normal
+  bjPuedeDoble=true;
+  bjPuedeSplit=bjManoJ[0].valor===bjManoJ[1].valor;
   render();
-  setTimeout(()=>alert(msg),50);
+}
+
+function bjRechazarSeguro(){
+  bjOfrecerSeguro=false; bjFase='jugando';
+  bjPuedeDoble=true;
+  bjPuedeSplit=bjManoJ.length===2&&bjManoJ[0].valor===bjManoJ[1].valor;
+  render();
+}
+
+function bjAceptarSeguro(){
+  const coste=Math.floor(bjApuesta/2);
+  if(monedas<coste){alert('No tienes monedas para el seguro.');return;}
+  monedas-=coste; guardarMonedas();
+  if(esBJNatural(bjManoC)){
+    const cobro=coste*2; monedas+=cobro;
+    bjOfrecerSeguro=false; bjFase='resultado';
+    bjResultado='perdido'; bjMensaje=`Blackjack del crupier. Seguro cobrado: +${cobro} monedas.`;
+    guardarMonedas(); verificarBancarrota(); render();
+  } else {
+    bjSeguroPagado=true; bjOfrecerSeguro=false; bjFase='jugando';
+    bjPuedeDoble=true;
+    bjPuedeSplit=bjManoJ.length===2&&bjManoJ[0].valor===bjManoJ[1].valor;
+    render();
+  }
+}
+
+function bjPedir(){
+  if(bjFase!=='jugando'&&bjFase!=='split2')return;
+  const z=[...bjZapato], carta=z.pop(); bjZapato=z;
+  bjPuedeDoble=false; bjPuedeSplit=false;
+  if(bjJugandoSplit){
+    bjManoSplit=[...bjManoSplit,carta];
+    if(calcularMano(bjManoSplit)>21){
+      bjResultadoSplit='perdido'; bjMensajeSplit='Te pasaste en la segunda mano.';
+      bjTurnoCrupier(z,[...bjManoC],bjManoJ,bjManoSplit,monedas,0);
+    } else render();
+  } else {
+    bjManoJ=[...bjManoJ,carta];
+    if(calcularMano(bjManoJ)>21){
+      if(bjManoSplit.length>0){
+        bjResultado='perdido'; bjMensaje='Te pasaste en la primera mano.';
+        bjJugandoSplit=true; bjFase='split2'; render();
+      } else {
+        bjFase='resultado'; bjResultado='perdido'; bjMensaje='Te has pasado de 21.';
+        resolverPagoBJ('perdido',bjApuesta);
+        guardarMonedas(); verificarBancarrota(); render();
+      }
+    } else render();
+  }
+}
+
+function bjPlantar(){
+  if(bjFase!=='jugando'&&bjFase!=='split2')return;
+  bjPuedeDoble=false; bjPuedeSplit=false;
+  if(!bjJugandoSplit&&bjManoSplit.length>0){
+    bjJugandoSplit=true; bjFase='split2'; render(); return;
+  }
+  const manoFinal=bjJugandoSplit?bjManoSplit:bjManoJ;
+  bjTurnoCrupier([...bjZapato],[...bjManoC],bjJugandoSplit?bjManoJ:manoFinal,bjJugandoSplit?manoFinal:[],monedas,bjApuestaDoble);
+}
+
+function bjDoblar(){
+  if(!bjPuedeDoble)return;
+  if(monedas<bjApuesta){alert('No tienes monedas para doblar.');return;}
+  monedas-=bjApuesta; bjApuestaDoble=bjApuesta;
+  bjPuedeDoble=false; bjPuedeSplit=false;
+  const z=[...bjZapato], carta=z.pop(); bjZapato=z;
+  bjManoJ=[...bjManoJ,carta]; render();
+  setTimeout(()=>{
+    if(calcularMano(bjManoJ)>21){
+      bjFase='resultado'; bjResultado='perdido'; bjMensaje='Doble — te has pasado.';
+      guardarMonedas(); verificarBancarrota(); render();
+    } else {
+      bjTurnoCrupier(z,[...bjManoC],bjManoJ,[],monedas,bjApuestaDoble);
+    }
+  },300);
+}
+
+function bjSplit(){
+  if(!bjPuedeSplit)return;
+  if(monedas<bjApuesta){alert('No tienes monedas para el split.');return;}
+  monedas-=bjApuesta; guardarMonedas();
+  const z=[...bjZapato];
+  const mano1=[bjManoJ[0],z.pop()], mano2=[bjManoJ[1],z.pop()];
+  bjManoJ=mano1; bjManoSplit=mano2; bjZapato=z;
+  bjPuedeDoble=false; bjPuedeSplit=false;
+  if(bjManoJ[0].nombre==='A'){
+    // Split de Ases: una carta por mano, resolver directo
+    bjFase='resultado';
+    setTimeout(()=>bjTurnoCrupier(z,[...bjManoC],mano1,mano2,monedas,0),400);
+  } else {
+    bjJugandoSplit=false; bjFase='jugando'; render();
+  }
+}
+
+function bjRendirse(){
+  if(!bjPuedeDoble)return; // solo con 2 cartas iniciales
+  const devuelto=Math.floor(bjApuesta/2);
+  monedas+=devuelto;
+  bjFase='resultado'; bjResultado='perdido';
+  bjMensaje=`Te rindes. Recuperas ${devuelto} monedas.`;
+  guardarMonedas(); render();
+}
+
+function bjTurnoCrupier(zapato, manoC, mJ1, mJ2, saldoBase, dobleExtra){
+  const turno=()=>{
+    const pC=calcularMano(manoC);
+    if(pC<17){
+      manoC.push(zapato.pop()); bjManoC=[...manoC]; bjZapato=[...zapato]; render();
+      setTimeout(turno,550);
+    } else {
+      const {res:r1,msg:m1}=finalizarManoBJ(mJ1,manoC,bjApuesta);
+      bjResultado=r1; bjMensaje=m1;
+      let saldoFinal=saldoBase;
+      if(r1==='ganado') saldoFinal+=bjApuesta*2;
+      else if(r1==='empate') saldoFinal+=bjApuesta;
+      if(dobleExtra>0){
+        if(r1==='ganado') saldoFinal+=dobleExtra*2;
+        else if(r1==='empate') saldoFinal+=dobleExtra;
+      }
+      if(mJ2&&mJ2.length>0){
+        const {res:r2,msg:m2}=finalizarManoBJ(mJ2,manoC,bjApuesta);
+        bjResultadoSplit=r2; bjMensajeSplit=m2;
+        if(r2==='ganado') saldoFinal+=bjApuesta*2;
+        else if(r2==='empate') saldoFinal+=bjApuesta;
+      }
+      monedas=saldoFinal;
+      // Racha
+      if(r1==='ganado'){
+        rachaActual++; guardarLocal('@bj_racha',rachaActual);
+        if(rachaActual>rachaMaxima){rachaMaxima=rachaActual;guardarLocal('@bj_racha_max',rachaMaxima);}
+      } else if(r1==='perdido'){ rachaActual=0; guardarLocal('@bj_racha',0); }
+      bjFase='resultado';
+      guardarMonedas(); verificarBancarrota(); render();
+    }
+  };
+  turno();
 }
 
 // ── Ruleta ────────────────────────────────────────────────────────────────────
@@ -254,8 +428,19 @@ async function tirarDados(){
 }
 
 // ── Rasca ─────────────────────────────────────────────────────────────────────
+function cargarLimiteRasca(){
+  const hoy=new Date().toISOString().slice(0,10);
+  const dia=leerLocal('@rasca_dia','');
+  if(dia===hoy){ rascaTiradasHoy=parseInt(leerLocal('@rasca_count','0')); }
+  else { rascaTiradasHoy=0; guardarLocal('@rasca_dia',hoy); guardarLocal('@rasca_count','0'); }
+}
 function comprarRasca(){
+  cargarLimiteRasca();
+  if(rascaTiradasHoy>=RASCA_LIMITE_DIARIO){ alert(`Límite diario alcanzado (${RASCA_LIMITE_DIARIO} cartones). Vuelve mañana.`); return; }
   if(monedas<rascaApuesta){alert('No tienes monedas suficientes.');return;}
+  rascaTiradasHoy++;
+  guardarLocal('@rasca_count', rascaTiradasHoy);
+  guardarLocal('@rasca_dia', new Date().toISOString().slice(0,10));
   monedas-=rascaApuesta;
   const rand=Math.random();
   let simbolos;
@@ -455,44 +640,110 @@ function htmlLobby(){
 }
 
 function htmlBlackjack(){
-  const totalJ=mazoJugador.length?calcularMano(mazoJugador):0;
-  const totalC=mazoCrupier.length?calcularMano(mazoCrupier):0;
-  const jugando=faseJuegoActual==='jugando';
-  const resultado=faseJuegoActual==='resultado';
-  return `
+  const pJ = bjManoJ.length ? calcularMano(bjManoJ) : 0;
+  const pC = bjManoC.length ? calcularMano(bjManoC) : 0;
+  const jugando = bjFase==='jugando' || bjFase==='split2';
+  const resultado = bjFase==='resultado';
+  const lobby = !bjVerTapete;
+
+  // Render carta compatible con nuevo formato {nombre, valor, palo}
+  const htmlCartaBJ = (c, oculta=false) => {
+    if(oculta) return `<div style="width:56px;height:84px;border-radius:8px;background:#2E1065;border:2px solid rgba(196,181,253,.5);display:flex;align-items:center;justify-content:center;overflow:hidden;flex-shrink:0"><img src="assets/Javicristo.png" style="width:100%;height:100%;object-fit:cover"/></div>`;
+    const col = ['♥','♦'].includes(c.palo)?'#C94A3F':'#111111';
+    return `<div style="width:56px;height:84px;border-radius:8px;background:#fff;border:1px solid #D1D5DB;padding:5px;display:flex;flex-direction:column;justify-content:space-between;flex-shrink:0;box-shadow:0 3px 6px rgba(0,0,0,.3)">
+      <div style="font-size:13px;font-weight:900;color:${col};line-height:1">${c.nombre}<br><span style="font-size:11px">${c.palo}</span></div>
+      <div style="font-size:22px;text-align:center;color:${col}">${c.palo}</div>
+    </div>`;
+  };
+
+  const rowCartas = (mano, oculta1=false) =>
+    `<div style="display:flex;flex-wrap:wrap;justify-content:center;gap:6px;min-height:90px;margin-bottom:10px">${mano.map((c,i)=>htmlCartaBJ(c, oculta1&&i===1)).join('')}</div>`;
+
+  const bannerRes = (msg, tipo, msg2='', tipo2='') => {
+    const b = htmlBanner(msg, tipo);
+    const b2 = msg2 ? htmlBanner(msg2, tipo2) : '';
+    return b + b2;
+  };
+
+  if(lobby) return `
     ${hud()}
     <div style="background:${C.bg};padding:14px;overflow-y:auto;flex:1">
       <div style="display:flex;align-items:center;gap:8px;padding-bottom:12px;border-bottom:1px solid rgba(255,255,255,.08);margin-bottom:14px">
-        <span style="color:#fff;font-weight:900;font-size:15px;letter-spacing:1px;flex:1">🃏 BLACK JACK</span>
+        <span style="color:#fff;font-weight:900;font-size:15px;flex:1">🃏 BLACK JACK</span>
         ${btnAyuda('blackjack')}
       </div>
-      ${faseJuegoActual==='lobby'?`
-        <div style="${s()}">
-          <div style="color:#9CA3AF;font-size:10px;font-weight:800;letter-spacing:2px;margin-bottom:12px">RACHA ACTUAL: <span style="color:#FEF08A">${rachaActual}</span> · RÉCORD: <span style="color:#34D399">${rachaMaxima}</span></div>
-          ${htmlSelectorApuesta(apuestaBJ,"window._bjApuesta(-10)","window._bjApuesta(10)","window._bjTodo()")}
-          ${btn('REPARTIR CARTAS','window._bjIniciar()')}
-          ${btnBack("window._casinoLobby()")}
-        </div>`:`
-        <div>
-          <div style="text-align:center;color:#9CA3AF;font-size:10px;font-weight:800;letter-spacing:1.5px;margin-bottom:6px">CRUPIER ${resultado?'— '+totalC:''}</div>
-          <div style="display:flex;flex-wrap:wrap;justify-content:center;gap:6px;min-height:90px;margin-bottom:12px">
-            ${jugando?htmlCarta(mazoCrupier[0])+htmlCarta(null,true):mazoCrupier.map(c=>htmlCarta(c)).join('')}
-          </div>
-          <div style="border-top:1px solid rgba(255,255,255,.08);margin:8px 0"></div>
-          <div style="text-align:center;color:#9CA3AF;font-size:10px;font-weight:800;letter-spacing:1.5px;margin-bottom:6px">TÚ — ${totalJ}${totalJ===21?' 🎉':totalJ>21?' 💥':''}</div>
-          <div style="display:flex;flex-wrap:wrap;justify-content:center;gap:6px;min-height:90px;margin-bottom:12px">
-            ${mazoJugador.map(c=>htmlCarta(c)).join('')}
-          </div>
-          ${jugando?`
-            <div style="display:flex;gap:8px">
-              <button onclick="window._bjPlantarse()" style="flex:1;background:#374151;color:#fff;border:none;border-radius:12px;padding:14px;font-weight:900;cursor:pointer">PLANTARSE</button>
-              <button onclick="window._bjPedir()" style="flex:1;background:${C.accent};color:#fff;border:none;border-radius:12px;padding:14px;font-weight:900;cursor:pointer">PEDIR</button>
-            </div>`:`
-            <button onclick="window._bjIniciar()" style="background:#059669;color:#fff;border:none;border-radius:12px;padding:14px;width:100%;font-weight:900;font-size:14px;cursor:pointer;margin-bottom:6px">NUEVA MANO</button>
-            ${btnBack("window._casinoLobby()")}
-          `}
+      <div style="${s()}">
+        <div style="color:#9CA3AF;font-size:10px;font-weight:800;letter-spacing:2px;margin-bottom:12px">
+          RACHA: <span style="color:#FEF08A">${rachaActual}</span> · RÉCORD: <span style="color:#34D399">${rachaMaxima}</span>
         </div>
-      `}
+        ${htmlSelectorApuesta(bjApuesta,"window._bjApuesta(-10)","window._bjApuesta(10)","window._bjTodo()")}
+        ${btn('REPARTIR CARTAS','window._bjIniciar()')}
+        ${btnBack("window._casinoLobby()")}
+      </div>
+    </div>`;
+
+  return `
+    ${hud()}
+    <div style="background:${C.bg};padding:14px;overflow-y:auto;flex:1">
+
+      <!-- CRUPIER -->
+      <div style="text-align:center;color:#9CA3AF;font-size:10px;font-weight:800;letter-spacing:1.5px;margin-bottom:6px">
+        CRUPIER${resultado?' — '+pC:''}
+      </div>
+      ${rowCartas(bjManoC, jugando)}
+
+      <div style="border-top:1px solid rgba(255,255,255,.08);margin:8px 0"></div>
+
+      <!-- JUGADOR mano principal -->
+      <div style="text-align:center;color:#9CA3AF;font-size:10px;font-weight:800;letter-spacing:1.5px;margin-bottom:6px">
+        TÚ — ${pJ}${pJ===21?' 🎉':pJ>21?' 💥':''}
+        ${bjJugandoSplit?' <span style="color:#FEF08A">(MANO 1)</span>':''}
+      </div>
+      ${rowCartas(bjManoJ)}
+
+      <!-- MANO SPLIT si existe -->
+      ${bjManoSplit.length>0?`
+        <div style="text-align:center;color:#9CA3AF;font-size:10px;font-weight:800;letter-spacing:1.5px;margin-bottom:6px">
+          MANO 2 — ${calcularMano(bjManoSplit)}
+          ${bjJugandoSplit?' <span style="color:#FEF08A">(JUGANDO)</span>':''}
+        </div>
+        ${rowCartas(bjManoSplit)}
+        ${bjResultadoSplit?htmlBanner(bjMensajeSplit,bjResultadoSplit):''}
+      `:''}
+
+      <!-- RESULTADO -->
+      ${bjMensaje?htmlBanner(bjMensaje,bjResultado):''}
+
+      <!-- SEGURO -->
+      ${bjFase==='seguro'?`
+        <div style="background:rgba(254,240,138,.08);border:1px solid rgba(254,240,138,.3);border-radius:12px;padding:14px;margin-bottom:10px;text-align:center">
+          <div style="color:#FEF08A;font-weight:800;font-size:13px;margin-bottom:6px">El crupier muestra un As. ¿Seguro?</div>
+          <div style="color:#9CA3AF;font-size:11px;margin-bottom:12px">Cuesta ${Math.floor(bjApuesta/2)} monedas · Paga 2:1 si tiene Blackjack</div>
+          <div style="display:flex;gap:8px">
+            <button onclick="window._bjRechazarSeguro()" style="flex:1;background:#374151;color:#fff;border:none;border-radius:12px;padding:13px;font-weight:900;cursor:pointer">NO, SEGUIR</button>
+            <button onclick="window._bjAceptarSeguro()" style="flex:1;background:${C.accent};color:#fff;border:none;border-radius:12px;padding:13px;font-weight:900;cursor:pointer">CONTRATAR</button>
+          </div>
+        </div>`:''}
+
+      <!-- BOTONES EN PARTIDA -->
+      ${jugando && bjFase!=='seguro'?`
+        <div style="display:flex;gap:8px;margin-bottom:8px">
+          <button onclick="window._bjPedir()" style="flex:1;background:${C.accent};color:#fff;border:none;border-radius:12px;padding:14px;font-weight:900;cursor:pointer">PEDIR</button>
+          <button onclick="window._bjPlantar()" style="flex:1;background:#374151;color:#fff;border:none;border-radius:12px;padding:14px;font-weight:900;cursor:pointer">PLANTARSE</button>
+        </div>
+        ${bjPuedeDoble||bjPuedeSplit?`
+        <div style="display:flex;gap:8px;margin-bottom:8px">
+          ${bjPuedeDoble?`<button onclick="window._bjDoblar()" style="flex:1;background:rgba(254,240,138,.12);border:1px solid rgba(254,240,138,.35);color:#FEF08A;border-radius:12px;padding:12px;font-weight:900;font-size:12px;cursor:pointer">DOBLAR<br><span style="font-size:10px;color:#9CA3AF">×2 apuesta</span></button>`:''}
+          ${bjPuedeSplit?`<button onclick="window._bjSplit()" style="flex:1;background:rgba(52,211,153,.1);border:1px solid rgba(52,211,153,.3);color:#34D399;border-radius:12px;padding:12px;font-weight:900;font-size:12px;cursor:pointer">SPLIT<br><span style="font-size:10px;color:#9CA3AF">dividir mano</span></button>`:''}
+          ${bjPuedeDoble?`<button onclick="window._bjRendirse()" style="flex:1;background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.3);color:#F87171;border-radius:12px;padding:12px;font-weight:900;font-size:12px;cursor:pointer">RENDIRSE<br><span style="font-size:10px;color:#9CA3AF">-${Math.floor(bjApuesta/2)}</span></button>`:''}
+        </div>`:''}
+      `:''}
+
+      <!-- BOTONES POST-MANO -->
+      ${resultado?`
+        <button onclick="window._bjIniciar()" style="background:#059669;color:#fff;border:none;border-radius:12px;padding:14px;width:100%;font-weight:900;font-size:14px;cursor:pointer;margin-bottom:6px">NUEVA MANO</button>
+        <button onclick="window._bjLobby()" style="background:#374151;color:#D1D5DB;border:none;border-radius:12px;padding:12px;width:100%;font-weight:700;font-size:13px;cursor:pointer">← SALIR AL MENÚ</button>
+      `:''}
     </div>`;
 }
 
@@ -595,6 +846,8 @@ function htmlDados(){
 }
 
 function htmlRasca(){
+  cargarLimiteRasca();
+  const limitado = rascaTiradasHoy >= RASCA_LIMITE_DIARIO;
   return `
     ${hud()}
     <div style="background:${C.bg};padding:14px;overflow-y:auto;flex:1">
@@ -606,9 +859,14 @@ function htmlRasca(){
         <div style="${s('text-align:center')}">
           <div style="font-size:42px;margin-bottom:8px">🎟️</div>
           <div style="color:#fff;font-weight:900;font-size:15px;margin-bottom:4px">CARTÓN LA BODEGUILLA</div>
-          <div style="color:#9CA3AF;font-size:11px;margin-bottom:16px;line-height:17px">9 símbolos · 6 casillas · Par x4<br>💎×3 → x80 · 💵×3 → x40 · resto → x20</div>
+          <div style="color:#9CA3AF;font-size:11px;margin-bottom:12px;line-height:17px">9 símbolos · 6 casillas · Par x2<br>💎×3 → x25 · 💵×3 → x15 · resto → x8</div>
+          <div style="background:${limitado?'rgba(239,68,68,.15)':'rgba(52,211,153,.1)'};border:1px solid ${limitado?'rgba(239,68,68,.4)':'rgba(52,211,153,.3)'};border-radius:10px;padding:10px;margin-bottom:14px">
+            <span style="color:${limitado?'#F87171':'#34D399'};font-size:12px;font-weight:800">
+              ${limitado?`Límite diario alcanzado — vuelve mañana`:`Tiradas hoy: ${rascaTiradasHoy} / ${RASCA_LIMITE_DIARIO}`}
+            </span>
+          </div>
           ${htmlSelectorApuesta(rascaApuesta,"window._rascaApuesta(-10)","window._rascaApuesta(10)","window._rascaTodo()")}
-          ${btn('🎟️ COMPRAR CARTÓN','window._rascaComprar()')}
+          <button onclick="window._rascaComprar()" ${limitado?'disabled':''} style="background:${limitado?'#374151':C.accent};color:#fff;border:none;border-radius:12px;padding:14px;width:100%;font-weight:900;font-size:14px;cursor:${limitado?'default':'pointer'};margin-bottom:6px;opacity:${limitado?0.5:1}">🎟️ COMPRAR CARTÓN</button>
           ${btnBack("window._casinoLobby()")}
         </div>`:`
         ${rascaMensaje?htmlBanner(rascaMensaje,rascaResultado):'<div style="color:#9CA3AF;font-size:12px;text-align:center;margin-bottom:10px">Toca cada casilla para rascar...</div>'}
@@ -694,7 +952,17 @@ function htmlRanking(){
 }
 
 const AYUDAS = {
-  blackjack: {t:'🃏 Black Jack',r:['Objetivo: llegar a 21 sin pasarte y ganar al crupier.','PEDIR: recibes una carta más.','PLANTARTE: el crupier completa su mano (llega hasta 16 mínimo).','Si te pasas de 21, pierdes automáticamente.','Blackjack natural (21 con 2 cartas) gana al instante.','Empate: recuperas la apuesta.'],p:'Victoria → x2 apuesta'},
+  blackjack: {t:'🃏 Black Jack',r:[
+    'Objetivo: llegar a 21 sin pasarte y ganar al crupier.',
+    'Zapato de 4 barajas. As vale 1 u 11. J,Q,K valen 10.',
+    'PEDIR: recibes una carta más.',
+    'PLANTARSE: el crupier completa su mano (se planta en 17+).',
+    'DOBLAR: doblas la apuesta, recibes solo 1 carta más.',
+    'SPLIT: si tus 2 cartas tienen el mismo valor, las divides en 2 manos.',
+    'RENDIRSE: en la primera jugada, recuperas la mitad de la apuesta.',
+    'SEGURO: si el crupier muestra As, puedes apostar contra su Blackjack (paga 2:1).',
+    'Blackjack natural (As+10 con 2 cartas) paga 3:2 y gana al 21 normal.',
+  ],p:'Victoria → x2 · Blackjack natural → x2.5 · Doble → x2 apuesta doble'},
   ruleta: {t:'🎡 Ruleta Europea',r:['Elige una ficha (1-50) y toca donde quieras apostar.','Puedes apostar a números, colores o pares/impares.','Pulsa GIRAR para lanzar la bola.','El 0 hace perder todas las apuestas de color y paridad.'],p:'Número → x36 · Color/Paridad → x2'},
   slots: {t:'🎰 Cubatas Jackpot',r:['Elige tu apuesta y pulsa TIRAR PALANCA.','Si dos o tres símbolos coinciden, ganas premio.','El 💎 es el símbolo más valioso.'],p:'Par → x3 · Trifecta: 💎×60 · 💵×40 · resto×15'},
   dados: {t:'🎲 Dados — Craps',r:['Tirada inicial: 7 u 11 → ganas · 2,3,12 → pierde.','Otro número se convierte en tu PUNTO.','Sigue tirando: saca el punto → ganas · saca 7 → pierde.'],p:'Victoria → x2 apuesta'},
@@ -756,17 +1024,34 @@ function render(){
 
 // ── Bindings globales ─────────────────────────────────────────────────────────
 window._casinoLobby   = ()=>{ pantallaC='lobby'; render(); };
-window._casinoJuego   = (j)=>{ pantallaC=j; faseJuegoActual='lobby'; render(); };
+window._casinoJuego   = (j)=>{
+  pantallaC=j;
+  // Reset BJ al entrar
+  if(j==='blackjack'){
+    bjVerTapete=false; bjFase='lobby'; bjManoJ=[]; bjManoC=[]; bjManoSplit=[];
+    bjJugandoSplit=false; bjResultado=''; bjMensaje=''; bjResultadoSplit='';
+    bjMensajeSplit=''; bjPuedeDoble=false; bjPuedeSplit=false;
+    bjOfrecerSeguro=false; bjSeguroPagado=false;
+  }
+  render();
+};
 window._casinoRanking = async()=>{ await cargarRanking(); };
 window._casinoAyuda   = (j)=>{ modalAyuda=j; render(); };
 window._cerrarAyuda   = ()=>{ modalAyuda=null; render(); };
 window._casinoConfirmarNombre = ()=>{ const n=document.getElementById('casino-nombre-input')?.value||''; confirmarNombre(n); };
 
-window._bjIniciar  = ()=>iniciarBJ();
-window._bjPedir    = ()=>pedirCartaBJ();
-window._bjPlantarse= ()=>plantarseBJ();
-window._bjApuesta  = (d)=>{ apuestaBJ=Math.max(10,apuestaBJ+d); render(); };
-window._bjTodo     = ()=>{ apuestaBJ=monedas; render(); };
+// BJ — nuevos handlers completos
+window._bjIniciar        = ()=>iniciarBJ();
+window._bjPedir          = ()=>bjPedir();
+window._bjPlantar        = ()=>bjPlantar();
+window._bjDoblar         = ()=>bjDoblar();
+window._bjSplit          = ()=>bjSplit();
+window._bjRendirse       = ()=>bjRendirse();
+window._bjAceptarSeguro  = ()=>bjAceptarSeguro();
+window._bjRechazarSeguro = ()=>bjRechazarSeguro();
+window._bjLobby          = ()=>{ bjVerTapete=false; bjFase='lobby'; render(); };
+window._bjApuesta  = (d)=>{ bjApuesta=Math.max(10,Math.min(monedas,bjApuesta+d)); render(); };
+window._bjTodo     = ()=>{ bjApuesta=monedas; render(); };
 
 window._ruletaFicha  = (f)=>{ fichaSeleccionada=f; render(); };
 window._ruletaApostar= (t,v)=>apostarRuleta(t,v);
@@ -785,8 +1070,8 @@ window._rascaComprar = ()=>comprarRasca();
 window._rascaCasilla = (i)=>rascarCasilla(i);
 window._rascaRevelar = ()=>revelarTodoRasca();
 window._rascaNuevo   = ()=>{ rascaCasillas=[]; rascaFase='comprar'; rascaMensaje=''; rascaResultado=''; render(); };
-window._rascaApuesta = (d)=>{ rascaApuesta=Math.max(10,rascaApuesta+d); render(); };
-window._rascaTodo    = ()=>{ rascaApuesta=monedas; render(); };
+window._rascaApuesta = (d)=>{ rascaApuesta=Math.max(10,Math.min(500,rascaApuesta+d)); render(); };
+window._rascaTodo    = ()=>{ rascaApuesta=Math.min(500,monedas); render(); };
 
 window._warJugar     = ()=>jugarWar();
 window._warGuerra    = ()=>irAGuerraWar();
